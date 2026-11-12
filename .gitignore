@@ -1,0 +1,7 @@
+# ISO images and build leftovers never belong in the repository
+*.iso
+austrumi-ko-work/
+austrumi-ko-tmp/
+info4/
+aus-info/
+report*.txt
