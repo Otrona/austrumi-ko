@@ -6,7 +6,7 @@
 
 AUSTRUMI는 라트비아에서 만든 슬랙웨어 기반의 작은 라이브 리눅스로, 전체가 램에서 실행됩니다. 기본 상태에서는 라트갈레어로 시작하고 한글 입력기도 한글 글꼴도 없습니다. 이 스크립트가 그 부분을 고쳐서 부팅 가능한 새 ISO를 만듭니다.
 
-> **상태: QEMU에서만 시험했습니다.** USB나 DVD에 기록해 실제 PC에서 부팅해 보지는 않았습니다. 사용하기 전에 [시험한 것](#시험한-것)과 [알려진 문제](#알려진-문제)를 읽어 주세요.
+> **상태:** QEMU와 실제 PC 한 대(ThinkPad E14 Gen 3, UEFI)에서 Ventoy USB로 부팅해 시험했습니다. 다른 부팅 방법은 시험하지 않았습니다. 사용하기 전에 [시험한 것](#시험한-것)과 [알려진 문제](#알려진-문제)를 읽어 주세요.
 
 ## 새 ISO에 들어가는 것
 
@@ -69,6 +69,59 @@ qemu-system-x86_64 -enable-kvm -cpu host -m 4G -rtc base=localtime -cdrom austru
 - `-m 4G`: QEMU 기본 메모리는 너무 작습니다. 약 600 MB를 램으로 복사하는 단계에서 멈춥니다.
 - `-rtc base=localtime`: 가상 시계를 윈도 PC처럼 동작시켜 1번 부팅 항목에서 시간이 맞게 나옵니다.
 
+## USB로 부팅하기
+
+이 ISO는 BIOS 부트 레코드만 있는 CD 이미지입니다. `dd`나 balenaEtcher 같은 도구로 USB에 기록해도 부팅되지 **않고**, Ventoy의 기본 메뉴에서 ISO를 고르는 방식도 UEFI 전용 PC에서는 부팅되지 않았습니다. 아래 두 방법 중 하나를 쓰세요.
+
+### Ventoy 사용(시험함)
+
+쓰던 Ventoy USB와 그 안의 다른 ISO를 그대로 둡니다. Ventoy가 USB에 있는 파일에서 AUSTRUMI 커널을 바로 시작하며, UEFI 전용 노트북(ThinkPad E14 Gen 3)에서 이 방법으로 부팅됐습니다.
+
+1. ISO 안의 `austrumi` 폴더를 Ventoy 파티션의 최상위에 복사합니다.
+
+   ```bash
+   sudo mkdir -p /mnt/aus-iso
+   sudo mount -o loop,ro austrumi64-5.3.0-ko.iso /mnt/aus-iso
+   cp -r /mnt/aus-iso/austrumi /run/media/$USER/Ventoy/
+   sudo umount /mnt/aus-iso
+   ```
+
+2. 같은 파티션에 `ventoy/ventoy_grub.cfg` 파일을 만들고 다음을 넣습니다.
+
+   ```
+   menuentry "AUSTRUMI ko 5.3.0 (FVWM2)" {
+       search --no-floppy --set=root --file /austrumi/bzImage
+       linux /austrumi/bzImage dousb greetd emb_user lang_en clock_utc
+       initrd /austrumi/amd-ucode.cpio /austrumi/intel-ucode.cpio /austrumi/initrd.gz
+   }
+   ```
+
+   윈도도 쓰는 PC라면 `clock_utc`를 지우세요.
+
+3. USB로 부팅한 뒤 Ventoy 메뉴에서 **F6**을 눌러 사용자 메뉴를 엽니다.
+
+USB는 제대로 설치된 Ventoy여야 합니다(파티션 두 개: `Ventoy`와 `VTOYEFI`). USB가 거부되면 Secure Boot를 끄세요. 이 방법에는 ISO 파일 자체가 USB에 없어도 됩니다.
+
+### 전용 USB로 만들기(시험하지 않음)
+
+AUSTRUMI는 원래 ISO의 파일들을 FAT32 USB에 담아 실행하도록 만들어져 있습니다. ISO에는 UEFI용 `EFI/BOOT`(rEFInd)와 BIOS용 `syslinux.cfg`가 들어 있고 둘 다 `dousb` 항목을 씁니다. **USB의 내용이 모두 지워지며**, 아래 순서는 실제로 해 보지 않았습니다.
+
+```bash
+DEV=/dev/sdX      # USB 전체. 확인: lsblk -o NAME,SIZE,MODEL,TRAN
+sudo apt install dosfstools mtools syslinux syslinux-common
+sudo wipefs -a $DEV
+sudo parted -s $DEV mklabel msdos mkpart primary fat32 1MiB 100% set 1 boot on
+sudo mkfs.vfat -F 32 -n AUSTRUMI ${DEV}1
+sudo mkdir -p /mnt/aus-usb /mnt/aus-iso
+sudo mount ${DEV}1 /mnt/aus-usb
+sudo mount -o loop,ro austrumi64-5.3.0-ko.iso /mnt/aus-iso
+sudo cp -r /mnt/aus-iso/. /mnt/aus-usb/
+sudo cp /usr/lib/syslinux/modules/bios/{vesamenu,libcom32,libutil}.c32 /mnt/aus-usb/austrumi/
+sudo umount /mnt/aus-iso /mnt/aus-usb
+sudo syslinux --install ${DEV}1                                              # BIOS PC에만 필요
+sudo dd if=/usr/lib/syslinux/mbr/mbr.bin of=$DEV bs=440 count=1 conv=notrunc   # BIOS PC에만 필요
+```
+
 ## 사용법
 
 - 로그인을 물으면 사용자 `austrumi`, 암호 `austrumi`.
@@ -87,7 +140,7 @@ AUSTRUMI 5.3.0 ISO는 시스템을 두 파일에 나눠 담고 있고, 스크립
 
 ## 시험한 것
 
-QEMU에서 부팅해 확인한 것(BIOS 부팅, 1280×800):
+QEMU에서 확인한 것(BIOS 부팅, 1280×800):
 
 - 부팅, 영어 메뉴, 자동 로그인
 - 텍스트 편집기와 LibreOffice Writer에서 fcitx5 한글 입력
@@ -97,10 +150,15 @@ QEMU에서 부팅해 확인한 것(BIOS 부팅, 1280×800):
 - 오른쪽 Alt를 한/영 키로 쓰는 US 키보드 배열
 - 시작 메뉴 줄이 포인터가 아이콘이나 줄 위에 있는 동안 열려 있고, 벗어나면 닫힘
 
+실제 PC(ThinkPad E14 Gen 3, UEFI, 1920×1080)에서 위의 Ventoy 방법으로 부팅해 확인한 것:
+
+- FVWM2 데스크톱으로 부팅. 한글 입력, 글꼴, LibreOffice Writer, Firefox, 시계가 정상 동작
+
 전혀 시험하지 않은 것:
 
-- USB나 DVD로 실제 PC에서 부팅
-- UEFI 부팅
+- 전용 FAT32 USB, DVD 부팅
+- 실제 PC에서의 BIOS(레거시) 부팅
+- AUSTRUMI 시스템 메뉴의 "Install to HDD"
 - LabWC, i3, E16 세션과 기본 테마가 아닌 FVWM 테마
 
 ## 알려진 문제
@@ -112,7 +170,9 @@ QEMU에서 부팅해 확인한 것(BIOS 부팅, 1280×800):
 | 시계가 9시간 늦음 | PC 시계가 UTC임. 부팅 메뉴 5번을 쓰거나, 본인용으로 `RTC=utc`로 빌드 |
 | 내려받기에서 빌드가 멈춤 | 미러 실패. 슬랙웨어 미러 다섯 곳을 차례로 시도하니 다시 실행 |
 | *work folder … cannot hold Linux owners* | `WORKDIR`이 NTFS/exFAT/FAT에 있음. 리눅스 디스크의 폴더로 지정 |
-| UEFI에서 ISO가 부팅되지 않음 | 원본과 똑같이 BIOS 부트 레코드만 있음. UEFI용 파일(`/EFI/BOOT`, rEFInd)은 AUSTRUMI 방식의 USB 설치를 위해 들어 있으나 여기서는 시험하지 않음 |
+| UEFI에서 ISO가 부팅되지 않음. Ventoy 메뉴에서 골라도 마찬가지 | 원본과 똑같이 BIOS 부트 레코드만 있음. [USB로 부팅하기](#usb로-부팅하기) 참고 |
+| `dd`나 Etcher로 만든 USB가 부팅되지 않음 | ISO에 USB용 부트 섹터가 없음. [USB로 부팅하기](#usb로-부팅하기) 참고 |
+| USB로 시작했는데 *Austrumi not found* | 시작 스크립트가 `austrumi` 폴더가 있는 파티션을 읽지 못했거나, 폴더가 최상위에 있지 않음 |
 | 빌드 중 `name mapping: … -> ?` | 문제 없음. 이미지에 `fc-match`가 없어서 검사를 못 할 뿐 |
 | Wayfire에서 창을 끌면 사라짐(QEMU) | 그래픽 가속 없이 흔들리는 창 효과가 켜져 있어서로 보임. 이 스크립트 탓이 아님 |
 | Sway에서 창을 끌 수 없음 | Sway는 타일형 창 관리자라 원래 그렇게 동작함 |

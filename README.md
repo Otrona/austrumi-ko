@@ -6,7 +6,7 @@ A single script that remasters the [AUSTRUMI](https://ftp.linux.edu.lv/austrumi/
 
 AUSTRUMI is a small Slackware-based live Linux from Latvia that runs entirely from RAM. Out of the box it starts in Latgalian, has no Korean input method and no Korean fonts. This script fixes that and writes a new bootable ISO.
 
-> **Status: tested only in QEMU.** It has not been written to a USB stick or DVD and booted on a real PC. See [What is tested](#what-is-tested) and [Known issues](#known-issues) before relying on it.
+> **Status:** tested in QEMU and on one real PC (ThinkPad E14 Gen 3, UEFI) started from a Ventoy USB stick. Other ways of booting are untested. See [What is tested](#what-is-tested) and [Known issues](#known-issues) before relying on it.
 
 ## What the remastered ISO has
 
@@ -69,6 +69,59 @@ Each option matters:
 - `-m 4G`: QEMU's default memory is far too small; the system copies about 600 MB into RAM and hangs at that stage.
 - `-rtc base=localtime`: makes the virtual clock behave like a Windows PC, so boot entry 1 shows the right time.
 
+## Boot from a USB stick
+
+The ISO is a CD image with a BIOS boot record only. Writing it to a stick with `dd`, balenaEtcher or similar does **not** give a bootable stick, and choosing the ISO in Ventoy's normal menu did not boot on a UEFI-only PC. Use one of the two ways below.
+
+### With Ventoy (tested)
+
+This keeps your Ventoy stick and its other ISOs. Ventoy starts AUSTRUMI's kernel directly from files on the stick, which is what worked on a UEFI-only laptop (ThinkPad E14 Gen 3).
+
+1. Copy the `austrumi` folder from the ISO to the top level of the Ventoy partition:
+
+   ```bash
+   sudo mkdir -p /mnt/aus-iso
+   sudo mount -o loop,ro austrumi64-5.3.0-ko.iso /mnt/aus-iso
+   cp -r /mnt/aus-iso/austrumi /run/media/$USER/Ventoy/
+   sudo umount /mnt/aus-iso
+   ```
+
+2. Create `ventoy/ventoy_grub.cfg` on the same partition with:
+
+   ```
+   menuentry "AUSTRUMI ko 5.3.0 (FVWM2)" {
+       search --no-floppy --set=root --file /austrumi/bzImage
+       linux /austrumi/bzImage dousb greetd emb_user lang_en clock_utc
+       initrd /austrumi/amd-ucode.cpio /austrumi/intel-ucode.cpio /austrumi/initrd.gz
+   }
+   ```
+
+   Remove `clock_utc` on a PC that also runs Windows.
+
+3. Boot the PC from the stick and press **F6** in the Ventoy menu to open the custom menu.
+
+The stick must be a real Ventoy install (two partitions, `Ventoy` and `VTOYEFI`). Turn Secure Boot off if the stick is refused. The ISO file itself does not need to be on the stick for this.
+
+### As a dedicated stick (untested)
+
+AUSTRUMI is designed to run from a FAT32 stick holding the ISO's files: the ISO contains `EFI/BOOT` (rEFInd) for UEFI and `syslinux.cfg` for BIOS, both with `dousb` entries. **This erases the stick**, and the steps have not been tried:
+
+```bash
+DEV=/dev/sdX      # the whole stick; check with: lsblk -o NAME,SIZE,MODEL,TRAN
+sudo apt install dosfstools mtools syslinux syslinux-common
+sudo wipefs -a $DEV
+sudo parted -s $DEV mklabel msdos mkpart primary fat32 1MiB 100% set 1 boot on
+sudo mkfs.vfat -F 32 -n AUSTRUMI ${DEV}1
+sudo mkdir -p /mnt/aus-usb /mnt/aus-iso
+sudo mount ${DEV}1 /mnt/aus-usb
+sudo mount -o loop,ro austrumi64-5.3.0-ko.iso /mnt/aus-iso
+sudo cp -r /mnt/aus-iso/. /mnt/aus-usb/
+sudo cp /usr/lib/syslinux/modules/bios/{vesamenu,libcom32,libutil}.c32 /mnt/aus-usb/austrumi/
+sudo umount /mnt/aus-iso /mnt/aus-usb
+sudo syslinux --install ${DEV}1                                              # BIOS PCs only
+sudo dd if=/usr/lib/syslinux/mbr/mbr.bin of=$DEV bs=440 count=1 conv=notrunc   # BIOS PCs only
+```
+
 ## Using it
 
 - Login, if asked: user `austrumi`, password `austrumi`.
@@ -87,7 +140,7 @@ Steps: mount the ISO, unpack both files, assemble them the way AUSTRUMI's own in
 
 ## What is tested
 
-Confirmed by booting the ISO in QEMU (BIOS boot, 1280×800):
+Confirmed in QEMU (BIOS boot, 1280×800):
 
 - Boots, English menus, automatic login
 - Hangul input with fcitx5 in a text editor and LibreOffice Writer
@@ -97,10 +150,15 @@ Confirmed by booting the ISO in QEMU (BIOS boot, 1280×800):
 - US keyboard layout with Right Alt as the Hangul key
 - The start-menu row stays open while the pointer is on the icon or the row, and closes when it leaves
 
+Confirmed on a real PC (ThinkPad E14 Gen 3, UEFI, 1920×1080), started from a Ventoy stick as described above:
+
+- Boots to the FVWM2 desktop; Hangul input, fonts, LibreOffice Writer, Firefox and the clock work
+
 Not tested at all:
 
-- Booting from a USB stick or DVD on a real PC
-- UEFI boot
+- The dedicated FAT32 stick, and booting from a DVD
+- BIOS (Legacy) boot on a real PC
+- "Install to HDD" from AUSTRUMI's system menu
 - The LabWC, i3 and E16 sessions, and FVWM themes other than the default
 
 ## Known issues
@@ -112,7 +170,9 @@ Not tested at all:
 | Clock is 9 hours behind | The PC clock holds UTC. Use boot entry 5, or build with `RTC=utc` for yourself |
 | Build stops at a download | A mirror failed. The script tries five Slackware mirrors; run it again |
 | *work folder … cannot hold Linux owners* | `WORKDIR` is on NTFS/exFAT/FAT. Point it at a folder on a Linux disk |
-| ISO does not boot under UEFI | The ISO has a BIOS boot record only, exactly like the original. The UEFI files (`/EFI/BOOT`, rEFInd) are on it for USB installs done the AUSTRUMI way, which is untested here |
+| ISO does not boot under UEFI, also when chosen in Ventoy's menu | The ISO has a BIOS boot record only, exactly like the original. See [Boot from a USB stick](#boot-from-a-usb-stick) |
+| Stick written with `dd` or Etcher does not boot | The ISO has no USB boot sector. See [Boot from a USB stick](#boot-from-a-usb-stick) |
+| *Austrumi not found* when started from USB | The startup script could not read the partition holding the `austrumi` folder, or the folder is not at the top level |
 | `name mapping: … -> ?` during the build | Harmless. The image has no `fc-match` tool, so the check cannot run |
 | Windows vanish while dragged in Wayfire (QEMU) | Probably the wobbly-windows effect without graphics acceleration; not caused by this script |
 | Windows cannot be dragged in Sway | Sway is a tiling window manager; that is how it works |
